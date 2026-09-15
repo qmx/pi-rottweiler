@@ -1,0 +1,43 @@
+{
+  "name": "@qmxme/pi-rottweiler",
+  "version": "0.1.0",
+  "description": "Command guard extension for pi - blocks destructive git ops, ssh, and whole-filesystem find",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qmx/pi-rottweiler"
+  },
+  "type": "module",
+  "main": "./rottweiler.ts",
+  "types": "./rottweiler.ts",
+  "files": [
+    "rottweiler.ts",
+    "README.md"
+  ],
+  "keywords": [
+    "pi",
+    "pi-package",
+    "extension",
+    "guard",
+    "security",
+    "shell"
+  ],
+  "pi": {
+    "extensions": [
+      "./rottweiler.ts"
+    ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "dev": "tsc --noEmit --watch",
+    "prepublishOnly": "npm run typecheck"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@types/node": "^22.10.7",
+    "typescript": "^5.7.3"
+  },
+  "license": "MIT"
+}
