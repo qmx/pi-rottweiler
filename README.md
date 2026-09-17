@@ -45,6 +45,7 @@ pi -e npm:@qmxme/pi-rottweiler
 ```bash
 npm install      # install type-checking dependencies
 npm run typecheck  # type-check the extension
+npm test         # run the regression test suite
 npm run dev      # watch mode
 ```
 

@@ -27,9 +27,10 @@
     ]
   },
   "scripts": {
+    "test": "node --test",
     "typecheck": "tsc --noEmit",
     "dev": "tsc --noEmit --watch",
-    "prepublishOnly": "npm run typecheck"
+    "prepublishOnly": "npm run typecheck && npm test"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

@@ -9,7 +9,8 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
+    "allowImportingTsExtensions": true,
     "lib": ["ES2022"]
   },
-  "include": ["rottweiler.ts"]
+  "include": ["rottweiler.ts", "test/**/*.ts"]
 }
