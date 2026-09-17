@@ -165,6 +165,24 @@ function nextCommandIndex(seg: Token[], start: number, wrapper: string): number 
 	return -1;
 }
 
+/** Index of the first real command token, skipping leading env assignments
+ * like `GIT_TRACE=1 git push ...`. Bash treats leading `VAR=...` as an env
+ * prefix and still runs the following command, so without this the real
+ * command word would hide behind the assignment and evade the guard. */
+function leadingCommandIndex(seg: Token[]): number {
+	let i = 0;
+	while (i < seg.length) {
+		const t = seg[i];
+		if (t.quoted) return i;
+		if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(t.text)) {
+			i++;
+			continue;
+		}
+		return i;
+	}
+	return -1;
+}
+
 function gitSubcommandIndex(seg: Token[], idx: number): number {
 	let j = idx + 1;
 	while (j < seg.length) {
@@ -222,7 +240,8 @@ function checkSegment(seg: Token[], depth: number): string | null {
 	if (depth > 6 || seg.length === 0) return null;
 
 	const candidates = new Map<number, Token>();
-	if (!seg[0].quoted) candidates.set(0, seg[0]);
+	const firstIdx = leadingCommandIndex(seg);
+	if (firstIdx !== -1 && !seg[firstIdx].quoted) candidates.set(firstIdx, seg[firstIdx]);
 	for (let i = 0; i < seg.length; i++) {
 		const t = seg[i];
 		if (t.quoted) continue;
