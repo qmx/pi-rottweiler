@@ -116,3 +116,16 @@ test("allows env prefix in front of safe commands", () => {
 	allow("GIT_TRACE=1 git status");
 	allow("FOO=1 ls");
 });
+
+test("allows heredoc bodies (they are data, not commands)", () => {
+	// Regression: heredoc content used to be tokenized as command words,
+	// so a commit message mentioning the blocked phrase was over-blocked.
+	allow("git commit -F- <<'EOF'\n  git push origin main\nEOF");
+	allow("cat <<'EOF'\nssh host\nEOF");
+	allow("cat <<-EOF\n\tgit push origin main\n\tEOF");
+});
+
+test("heredocs do not mask a real dangerous command", () => {
+	block("git push origin main <<'EOF'\ndata\nEOF", "git push is blocked");
+	block("ssh host <<EOF\ndata\nEOF", "ssh-family command is blocked");
+});

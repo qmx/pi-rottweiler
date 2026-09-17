@@ -53,6 +53,50 @@ const WRAPPER_OPT_VALUE: Record<string, Set<string>> = {
 	chroot: new Set(["-u", "-g", "--userspec", "--groups"]),
 };
 
+/** If cmd[i..] is a heredoc (`<<[ -]DELIM`), return the index just past the
+ * closing delimiter line. The heredoc body is data fed to the command's stdin,
+ * not command words, so it must be skipped, not tokenized (otherwise words like
+ * the blocked phrase inside a commit message would over-block the command).
+ * Returns -1 if this isn't a well-formed heredoc. */
+function skipHeredoc(cmd: string, i: number): number {
+	if (cmd[i] !== "<" || cmd[i + 1] !== "<") return -1;
+	let k = i + 2;
+	let stripTabs = false;
+	if (cmd[k] === "-") {
+		stripTabs = true;
+		k++;
+	}
+	let delim = "";
+	if (cmd[k] === "'" || cmd[k] === '"') {
+		const q = cmd[k];
+		const end = cmd.indexOf(q, k + 1);
+		delim = end === -1 ? cmd.slice(k + 1) : cmd.slice(k + 1, end);
+		k = end === -1 ? cmd.length : end + 1;
+	} else {
+		while (k < cmd.length && !" \t\n;|&(){}<>`".includes(cmd[k])) {
+			delim += cmd[k];
+			k++;
+		}
+	}
+	if (!delim) return -1;
+	// body starts after the newline following the marker
+	const nl = cmd.indexOf("\n", k);
+	if (nl === -1) return -1;
+	let pos = nl + 1;
+	while (pos <= cmd.length) {
+		let lineEnd = cmd.indexOf("\n", pos);
+		if (lineEnd === -1) lineEnd = cmd.length;
+		let line = cmd.slice(pos, lineEnd);
+		if (stripTabs) line = line.replace(/^\t+/, "");
+		if (line === delim) {
+			return lineEnd === cmd.length ? lineEnd : lineEnd + 1;
+		}
+		pos = lineEnd + 1;
+		if (lineEnd === cmd.length) break;
+	}
+	return cmd.length;
+}
+
 /** Tokenize a shell command. Quoted strings become single (quoted) tokens;
  * shell separators and command substitutions become `sep` tokens. */
 function tokenize(cmd: string): Token[] {
@@ -103,6 +147,17 @@ function tokenize(cmd: string): Token[] {
 		} else if (c === " " || c === "\t") {
 			flush();
 			i++;
+		} else if (c === "<" && cmd[i + 1] === "<") {
+			const ni = skipHeredoc(cmd, i);
+			if (ni !== -1) {
+				// heredoc body is data; keep the segment boundary with a sep token
+				tokens.push({ text: "\n", quoted: false, sep: true });
+				i = ni;
+			} else {
+				flush();
+				tokens.push({ text: "<", quoted: false, sep: true });
+				i++;
+			}
 		} else if ("\n;|&(){}<>`".includes(c)) {
 			flush();
 			tokens.push({ text: c, quoted: false, sep: true });
