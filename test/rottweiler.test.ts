@@ -93,6 +93,41 @@ test("isGitPushCommand detects push commands the handler must resolve", () => {
 	assert.equal(isGitPushCommand(""), false);
 });
 
+test("blocks git push --tags regardless of branch", () => {
+	block("git push --tags", "git push --tags is blocked");
+	block("git push --tags origin", "git push --tags is blocked");
+	block("git push origin main --tags", "git push --tags is blocked");
+	block("sudo git push --tags", "git push --tags is blocked");
+});
+
+test("blocks npm version", () => {
+	block("npm version patch", "npm version is blocked");
+	block("npm version minor", "npm version is blocked");
+	block("npm version 1.2.3", "npm version is blocked");
+	block("sudo npm version patch", "npm version is blocked");
+});
+
+test("allows other npm commands", () => {
+	allow("npm install");
+	allow("npm run typecheck");
+	allow("npm publish");
+});
+
+test("blocks nixos-rebuild switch", () => {
+	block("nixos-rebuild switch", "nixos-rebuild switch is blocked");
+	block("nixos-rebuild switch --flake .#host", "nixos-rebuild switch is blocked");
+	block("sudo nixos-rebuild switch", "nixos-rebuild switch is blocked");
+	allow("nixos-rebuild build");
+	allow("nixos-rebuild dry-run");
+});
+
+test("blocks home-manager switch", () => {
+	block("home-manager switch", "home-manager switch is blocked");
+	block("home-manager switch --flake .#user", "home-manager switch is blocked");
+	block("sudo home-manager switch", "home-manager switch is blocked");
+	allow("home-manager build");
+});
+
 // ---------------------------------------------------------------------------
 // other destructive git operations
 // ---------------------------------------------------------------------------

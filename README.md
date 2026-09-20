@@ -7,7 +7,9 @@ Command guard extension for [pi](https://github.com/badlogic/pi) that blocks des
 Blocks the following before execution:
 
 - **Pushes to protected branches**: `git push` targeting `master` or `main` (including `git push` / `git push <remote>` while on `master` or `main`). Pushes to any other branch are allowed.
-- **Other destructive git operations**: `git update-ref`, `git tag -d`, `git reset --hard`
+- **Other destructive git operations**: `git push --tags`, `git update-ref`, `git tag -d`, `git reset --hard`
+- **Release / version bumps**: `npm version`
+- **System / environment switches**: `nixos-rebuild switch`, `home-manager switch`
 - **The ssh family**: `ssh`, `ssh-add`, `ssh-agent`, `ssh-copy-id`, `sshd`, `sftp`, `scp`, `slogin`
 - **Whole-filesystem scans**: `find /` (find on the entire filesystem)
 

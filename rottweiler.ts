@@ -287,6 +287,7 @@ function isProtectedTarget(refspec: string): boolean {
  * i.e. `git push` or `git push <remote>`, which push the current branch. */
 function gitPushBlockReason(seg: Token[], subIdx: number, opts: BlockOpts): string | null {
 	const args: string[] = [];
+	let tags = false;
 	let i = subIdx + 1;
 	while (i < seg.length) {
 		const t = seg[i];
@@ -296,12 +297,16 @@ function gitPushBlockReason(seg: Token[], subIdx: number, opts: BlockOpts): stri
 			continue;
 		}
 		if (t.text.startsWith("-")) {
+			if (t.text === "--tags") tags = true;
 			i += PUSH_OPT_VALUE.has(t.text) ? 2 : 1;
 			continue;
 		}
 		args.push(t.text);
 		i++;
 	}
+
+	// pushing tags is blocked outright, regardless of branch
+	if (tags) return "git push --tags is blocked";
 
 	// implicit push of the current branch (git push / git push <remote>)
 	const implicitReason = (): string | null => {
@@ -372,6 +377,17 @@ function checkCommand(seg: Token[], idx: number, opts: BlockOpts): string | null
 			const next = seg[subIdx + 1];
 			if (next && next.text === "--hard") return "git reset --hard is blocked";
 		}
+	}
+
+	if (text === "npm") {
+		const next = seg[idx + 1];
+		if (next && next.text === "version") return "npm version is blocked";
+	}
+
+	if (text === "nixos-rebuild" || text === "home-manager") {
+		let j = idx + 1;
+		while (j < seg.length && seg[j].text.startsWith("-")) j++;
+		if (j < seg.length && seg[j].text === "switch") return `${text} switch is blocked`;
 	}
 
 	return null;
