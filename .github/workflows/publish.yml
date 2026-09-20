@@ -20,6 +20,15 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
+      # Staged publishing needs npm >= 11.15; Node 24's bundled npm may be older.
+      - run: npm install -g npm@latest
+
       - run: npm ci
 
-      - run: npm publish --access public
+      # Stage the release instead of publishing directly. A maintainer must
+      # approve it with 2FA (npm stage approve <stage-id>, or the npmjs.com
+      # "Staged Packages" tab) before it goes live on the registry.
+      - run: npm stage publish --access public
+
+      - name: Show staged packages
+        run: npm stage list >> "$GITHUB_STEP_SUMMARY"
