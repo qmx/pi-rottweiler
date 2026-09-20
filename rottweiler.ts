@@ -13,6 +13,7 @@
  */
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { isToolCallEventType } from "@earendil-works/pi-coding-agent";
+import { execFile } from "node:child_process";
 
 interface Token {
 	text: string;
@@ -259,7 +260,89 @@ function gitSubcommandIndex(seg: Token[], idx: number): number {
 	return -1;
 }
 
-function checkCommand(seg: Token[], idx: number): string | null {
+/** Branches that pushes are blocked to. */
+const PROTECTED = new Set(["master", "main"]);
+
+/** Options to `git push` that consume a following argument. */
+const PUSH_OPT_VALUE = new Set([
+	"-c", "-o", "--push-option", "--repo", "--remote",
+	"--recurse-submodules", "--exec", "--force-with-lease",
+]);
+
+/** Extract the remote-side branch name from a refspec (`src:dst`, `:dst`,
+ * `src:refs/heads/dst`). For a bare ref the target is the ref itself. */
+function pushTarget(refspec: string): string {
+	const colon = refspec.lastIndexOf(":");
+	const target = colon === -1 ? refspec : refspec.slice(colon + 1);
+	return target.replace(/^refs\/heads\//, "");
+}
+
+/** Whether a push target is a protected branch (master/main). */
+function isProtectedTarget(refspec: string): boolean {
+	return PROTECTED.has(pushTarget(refspec));
+}
+
+/** Return a block reason if this `git push` targets a protected branch, else
+ * null. `opts.currentBranch` resolves implicit pushes (no explicit refspec),
+ * i.e. `git push` or `git push <remote>`, which push the current branch. */
+function gitPushBlockReason(seg: Token[], subIdx: number, opts: BlockOpts): string | null {
+	const args: string[] = [];
+	let i = subIdx + 1;
+	while (i < seg.length) {
+		const t = seg[i];
+		if (t.quoted) {
+			args.push(t.text);
+			i++;
+			continue;
+		}
+		if (t.text.startsWith("-")) {
+			i += PUSH_OPT_VALUE.has(t.text) ? 2 : 1;
+			continue;
+		}
+		args.push(t.text);
+		i++;
+	}
+
+	// implicit push of the current branch (git push / git push <remote>)
+	const implicitReason = (): string | null => {
+		const b = opts.currentBranch;
+		if (b && PROTECTED.has(b)) return `git push to ${b} is blocked`;
+		return null;
+	};
+
+	if (args.length === 0) return implicitReason();
+
+	// a single arg is either a remote (implicit push) or a bare refspec
+	if (args.length === 1) {
+		if (isProtectedTarget(args[0])) return `git push to ${pushTarget(args[0])} is blocked`;
+		return implicitReason();
+	}
+
+	// refspecs are everything after the repository (first non-option arg)
+	for (const ref of args.slice(1)) {
+		if (isProtectedTarget(ref)) return `git push to ${pushTarget(ref)} is blocked`;
+	}
+	return null;
+}
+
+/** Collect the plausible command words of a segment (leading command plus any
+ * wrapped commands), mirroring how the guard picks what to inspect. */
+function findCommandCandidates(seg: Token[]): Map<number, Token> {
+	const candidates = new Map<number, Token>();
+	const firstIdx = leadingCommandIndex(seg);
+	if (firstIdx !== -1 && !seg[firstIdx].quoted) candidates.set(firstIdx, seg[firstIdx]);
+	for (let i = 0; i < seg.length; i++) {
+		const t = seg[i];
+		if (t.quoted) continue;
+		if (WRAPPERS.has(t.text)) {
+			const ni = nextCommandIndex(seg, i + 1, t.text);
+			if (ni !== -1) candidates.set(ni, seg[ni]);
+		}
+	}
+	return candidates;
+}
+
+function checkCommand(seg: Token[], idx: number, opts: BlockOpts): string | null {
 	const text = seg[idx].text;
 
 	if (SSH_FAMILY.has(text)) return "ssh-family command is blocked";
@@ -275,8 +358,11 @@ function checkCommand(seg: Token[], idx: number): string | null {
 		const subIdx = gitSubcommandIndex(seg, idx);
 		if (subIdx === -1) return null;
 		const sub = seg[subIdx].text;
-		if (sub === "push" || sub === "update-ref") {
-			return sub === "push" ? "git push is blocked" : "git update-ref is blocked";
+		if (sub === "push") {
+			return gitPushBlockReason(seg, subIdx, opts);
+		}
+		if (sub === "update-ref") {
+			return "git update-ref is blocked";
 		}
 		if (sub === "tag") {
 			const next = seg[subIdx + 1];
@@ -291,30 +377,22 @@ function checkCommand(seg: Token[], idx: number): string | null {
 	return null;
 }
 
-function checkSegment(seg: Token[], depth: number): string | null {
+interface BlockOpts {
+	currentBranch?: string;
+}
+
+function checkSegment(seg: Token[], depth: number, opts: BlockOpts): string | null {
 	if (depth > 6 || seg.length === 0) return null;
 
-	const candidates = new Map<number, Token>();
-	const firstIdx = leadingCommandIndex(seg);
-	if (firstIdx !== -1 && !seg[firstIdx].quoted) candidates.set(firstIdx, seg[firstIdx]);
-	for (let i = 0; i < seg.length; i++) {
-		const t = seg[i];
-		if (t.quoted) continue;
-		if (WRAPPERS.has(t.text)) {
-			const ni = nextCommandIndex(seg, i + 1, t.text);
-			if (ni !== -1) candidates.set(ni, seg[ni]);
-		}
-	}
-
-	for (const [idx, tok] of candidates) {
-		const reason = checkCommand(seg, idx);
+	for (const [idx, tok] of findCommandCandidates(seg)) {
+		const reason = checkCommand(seg, idx, opts);
 		if (reason) return reason;
 
 		// shell -c '<command>': recurse into the quoted command string
 		if (SHELLS.has(tok.text)) {
 			const next = seg[idx + 1];
 			if (next && next.text === "-c" && seg[idx + 2]) {
-				const inner = checkSegment(tokenize(seg[idx + 2].text).filter((t) => !t.sep), depth + 1);
+				const inner = checkSegment(tokenize(seg[idx + 2].text).filter((t) => !t.sep), depth + 1, opts);
 				if (inner) return inner;
 			}
 		}
@@ -322,21 +400,46 @@ function checkSegment(seg: Token[], depth: number): string | null {
 
 	// first token as a shell with -c (e.g. `bash -c 'ssh host'`)
 	if (SHELLS.has(seg[0].text) && seg[1] && seg[1].text === "-c" && seg[2]) {
-		const inner = checkSegment(tokenize(seg[2].text).filter((t) => !t.sep), depth + 1);
+		const inner = checkSegment(tokenize(seg[2].text).filter((t) => !t.sep), depth + 1, opts);
 		if (inner) return inner;
 	}
 
 	return null;
 }
 
-export function isBlockedCommand(command: string): string | null {
+export function isBlockedCommand(command: string, opts: BlockOpts = {}): string | null {
 	if (!command || command.trim() === "") return null;
 	const tokens = tokenize(command);
 	for (const seg of splitSegments(tokens)) {
-		const reason = checkSegment(seg, 0);
+		const reason = checkSegment(seg, 0, opts);
 		if (reason) return reason;
 	}
 	return null;
+}
+
+/** Whether the command runs a `git push` (so the handler must resolve the
+ * current branch to evaluate an implicit push). */
+export function isGitPushCommand(command: string): boolean {
+	if (!command || command.trim() === "") return false;
+	const tokens = tokenize(command);
+	for (const seg of splitSegments(tokens)) {
+		for (const [idx, tok] of findCommandCandidates(seg)) {
+			if (tok.text !== "git") continue;
+			const subIdx = gitSubcommandIndex(seg, idx);
+			if (subIdx !== -1 && seg[subIdx].text === "push") return true;
+		}
+	}
+	return false;
+}
+
+function resolveCurrentBranch(cwd: string): Promise<string | undefined> {
+	return new Promise((resolve) => {
+		execFile("git", ["branch", "--show-current"], { cwd, timeout: 5000 }, (err, stdout) => {
+			if (err) return resolve(undefined);
+			const branch = stdout.trim();
+			resolve(branch || undefined);
+		});
+	});
 }
 
 export default function (pi: ExtensionAPI) {
@@ -344,7 +447,13 @@ export default function (pi: ExtensionAPI) {
 		if (!isToolCallEventType("bash", event)) return;
 
 		const command = event.input.command;
-		const reason = isBlockedCommand(command);
+
+		let currentBranch: string | undefined;
+		if (isGitPushCommand(command)) {
+			currentBranch = await resolveCurrentBranch(ctx.cwd);
+		}
+
+		const reason = isBlockedCommand(command, { currentBranch });
 
 		if (reason) {
 			if (ctx.hasUI) {
